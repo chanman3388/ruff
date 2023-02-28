@@ -1985,12 +1985,14 @@ where
                 name,
                 args,
                 decorator_list,
+                returns,
                 ..
             }
             | StmtKind::AsyncFunctionDef {
                 body,
                 name,
                 args,
+                returns,
                 decorator_list,
                 ..
             } => {
@@ -2041,6 +2043,7 @@ where
                     body,
                     args,
                     decorator_list,
+                    returns,
                     async_: matches!(stmt.node, StmtKind::AsyncFunctionDef { .. }),
                     globals,
                 })));
@@ -4875,6 +4878,16 @@ impl<'a> Checker<'a> {
                         &self.scopes[scope_index],
                         &self.bindings,
                     ));
+            }
+            // PLE1128
+            println!("PLE1128");
+            if self.settings.rules.enabled(&Rule::AssignmentFromNone) {
+                if let ScopeKind::Function(func) = &self.scopes[scope_index].kind {
+                    println!("SCRUB {func:?}");
+                    if let Some(diagnostic) = pylint::rules::assignment_from_none(func.returns) {
+                        self.diagnostics.push(diagnostic);
+                    }
+                }
             }
         }
     }
