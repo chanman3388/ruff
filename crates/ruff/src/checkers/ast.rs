@@ -2138,6 +2138,9 @@ where
                 }
                 self.in_exception_handler = prev_in_exception_handler;
 
+                // find way to figure out ancestors to exceptions
+                // println!("{:?}", handlers);
+
                 self.visit_body(orelse);
                 self.visit_body(finalbody);
             }
