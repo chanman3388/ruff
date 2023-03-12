@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fs;
 use std::hash::Hasher;
 use std::io::Write;
@@ -20,15 +21,15 @@ use std::os::unix::fs::PermissionsExt;
 const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Serialize)]
-struct CheckResultRef<'a> {
-    messages: &'a [Message],
-    imports: &'a FxHashMap<PathBuf, Vec<Import>>,
+struct CheckResultRef {
+    messages: &[Message],
+    imports: &FxHashMap<Cow<str>, Vec<Import>>,
 }
 
 #[derive(Deserialize)]
 struct CheckResult {
     messages: Vec<Message>,
-    imports: FxHashMap<PathBuf, Vec<Import>>,
+    imports: FxHashMap<Cow<str>, Vec<Import>>,
 }
 
 fn content_dir() -> &'static Path {
@@ -123,7 +124,7 @@ pub fn set<P: AsRef<Path>>(
     settings: &AllSettings,
     autofix: flags::Autofix,
     messages: &[Message],
-    imports: &FxHashMap<PathBuf, Vec<Import>>,
+    imports: &FxHashMap<Cow<str>, Vec<Import>>,
 ) {
     let check_result = CheckResultRef { messages, imports };
     if let Err(e) = write_sync(

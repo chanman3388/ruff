@@ -51,8 +51,8 @@ impl<T> LinterResult<T> {
     }
 }
 
-pub type DiagnosticsAndImports = (Vec<Diagnostic>, FxHashMap<PathBuf, Vec<Import>>);
-pub type MessagesAndImports = (Vec<Message>, FxHashMap<PathBuf, Vec<Import>>);
+pub type DiagnosticsAndImports<'a> = (Vec<Diagnostic>, FxHashMap<Cow<'a, str>, Vec<Import>>);
+pub type MessagesAndImports<'a> = (Vec<Message>, FxHashMap<Cow<'a, str>, Vec<Import>>);
 pub type FixTable = FxHashMap<&'static Rule, usize>;
 
 /// Generate `Diagnostic`s from the source code contents at the
@@ -70,10 +70,10 @@ pub fn check_path<'a>(
     settings: &'a Settings,
     noqa: flags::Noqa,
     autofix: flags::Autofix,
-) -> LinterResult<DiagnosticsAndImports> {
+) -> LinterResult<DiagnosticsAndImports<'a>> {
     // Aggregate all diagnostics.
     let mut diagnostics = vec![];
-    let mut imports: FxHashMap<PathBuf, Vec<Import>> = FxHashMap::default();
+    let mut imports: FxHashMap<Cow<'a, str>, Vec<Import>> = FxHashMap::default();
     let mut error = None;
 
     // Collect doc lines. This requires a rare mix of tokens (for comments) and AST
@@ -298,14 +298,14 @@ pub fn add_noqa_to_path(path: &Path, package: Option<&Path>, settings: &Settings
 
 /// Generate a [`Message`] for each [`Diagnostic`] triggered by the given source
 /// code.
-pub fn lint_only(
-    contents: &str,
-    path: &Path,
-    package: Option<&Path>,
-    settings: &Settings,
+pub fn lint_only<'a>(
+    contents: &'a str,
+    path: &'a Path,
+    package: Option<&'a Path>,
+    settings: &'a Settings,
     noqa: flags::Noqa,
     autofix: flags::Autofix,
-) -> LinterResult<MessagesAndImports> {
+) -> LinterResult<MessagesAndImports<'a>> {
     // Tokenize once.
     let tokens: Vec<LexResult> = ruff_rustpython::tokenize(contents);
 
@@ -363,11 +363,11 @@ pub fn lint_only(
 /// until stable.
 pub fn lint_fix<'a>(
     contents: &'a str,
-    path: &Path,
+    path: &'a Path,
     package: Option<&Path>,
     noqa: flags::Noqa,
     settings: &Settings,
-) -> Result<(LinterResult<MessagesAndImports>, Cow<'a, str>, FixTable)> {
+) -> Result<(LinterResult<MessagesAndImports<'a>>, Cow<'a, str>, FixTable)> {
     let mut transformed = Cow::Borrowed(contents);
 
     // Track the number of fixed errors across iterations.

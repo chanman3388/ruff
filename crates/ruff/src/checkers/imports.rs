@@ -1,5 +1,6 @@
 //! Lint rules based on import analysis.
-use std::path::{Path, PathBuf};
+use std::borrow::Cow;
+use std::path::Path;
 
 use rustc_hash::FxHashMap;
 use rustpython_parser::ast::{StmtKind, Suite};
@@ -16,7 +17,7 @@ use crate::rules::isort::track::{Block, ImportTracker};
 use crate::settings::{flags, Settings};
 
 #[allow(clippy::too_many_arguments)]
-pub fn check_imports(
+pub fn check_imports<'a>(
     python_ast: &Suite,
     locator: &Locator,
     indexer: &Indexer,
@@ -24,9 +25,9 @@ pub fn check_imports(
     settings: &Settings,
     stylist: &Stylist,
     autofix: flags::Autofix,
-    path: &Path,
+    path: &'a Path,
     package: Option<&Path>,
-) -> (Vec<Diagnostic>, FxHashMap<PathBuf, Vec<Import>>) {
+) -> (Vec<Diagnostic>, FxHashMap<Cow<'a, str>, Vec<Import>>) {
     // Extract all imports from the AST.
     let tracker = {
         let mut tracker = ImportTracker::new(locator, directives, path);
@@ -55,7 +56,7 @@ pub fn check_imports(
             &blocks, python_ast, locator, stylist, settings, autofix,
         ));
     }
-    let mut imports: FxHashMap<PathBuf, Vec<Import>> = FxHashMap::default();
+    let mut imports: FxHashMap<Cow<str>, Vec<Import>> = FxHashMap::default();
     let mut imports_vec = vec![];
     for &block in &blocks {
         block.imports.iter().for_each(|&stmt| match &stmt.node {
@@ -94,6 +95,6 @@ pub fn check_imports(
     // to avoid depedence on ref to python_ast
     // let package = package.map(std::path::Path::to_path_buf);
 
-    imports.insert(path.to_owned(), imports_vec);
+    imports.insert(path.to_string_lossy(), imports_vec);
     (diagnostics, imports)
 }
