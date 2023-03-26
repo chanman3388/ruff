@@ -1,4 +1,6 @@
-use rustc_hash::FxHashMap;
+use log::debug;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use ruff_diagnostics::{Diagnostic, Violation};
 use ruff_macros::{derive_message_formats, violation};
@@ -23,10 +25,11 @@ struct CyclicImportChecker<'a> {
 impl CyclicImportChecker<'_> {
     fn has_cycles(&self) -> Option<Vec<Vec<&str>>> {
         let mut cycles: Vec<Vec<&str>> = Vec::new();
+        let mut fully_visited: FxHashSet<&str> = FxHashSet::default();
         for (name, vec) in self.imports.iter() {
-            if !vec.is_empty() {
+            if !vec.is_empty() && !fully_visited.contains(name as &str) {
                 let mut stack: Vec<&str> = vec![name];
-                self.has_cycles_helper(name, &mut stack, &mut cycles, 0);
+                self.has_cycles_helper(name, &mut stack, &mut cycles, &mut fully_visited, 0);
             }
         }
         if cycles.is_empty() {
@@ -38,25 +41,30 @@ impl CyclicImportChecker<'_> {
 
     fn has_cycles_helper<'a>(
         &'a self,
-        name: &str,
+        name: &'a str,
         stack: &mut Vec<&'a str>,
         cycles: &mut Vec<Vec<&'a str>>,
+        fully_visited: &mut FxHashSet<&'a str>,
         level: usize,
     ) {
         if let Some(imports) = self.imports.get(name) {
             let tabs = "\t".repeat(level);
+            debug!("{tabs}{name}");
             for import in imports.iter() {
-                log::debug!("{tabs}\timport {}", import.name);
+                debug!("{tabs}\timport: {}", import.name);
                 if let Some((idx, _)) = stack.iter().enumerate().find(|(_, &s)| s == import.name) {
-                    if idx == 0 {
-                        cycles.push(stack.clone());
-                    }
+                    debug!("{tabs}\t\t cycles: {:?}", stack[idx..].to_vec());
+                    cycles.push(stack[idx..].to_vec());
+                    // if idx == 0 {
+                    //     cycles.push(stack.clone());
+                    // }
                 } else {
                     stack.push(&import.name);
-                    self.has_cycles_helper(&import.name, stack, cycles, level + 1);
+                    self.has_cycles_helper(&import.name, stack, cycles, fully_visited, level + 1);
                     stack.pop();
                 }
             }
+            fully_visited.insert(name);
         }
     }
 }
