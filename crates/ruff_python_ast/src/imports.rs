@@ -1,5 +1,5 @@
 use ruff_text_size::TextRange;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -183,22 +183,12 @@ impl<'a> ModuleMapping<'a> {
     }
 }
 
-#[derive(Default)]
-pub struct CyclicImportHelper<'a> {
-    pub cycles: FxHashMap<u32, FxHashSet<Vec<u32>>>,
-    pub module_mapping: ModuleMapping<'a>,
-}
-
-impl<'a> CyclicImportHelper<'a> {
-    pub fn new(import_map: &'a ImportMap) -> Self {
+impl<'a> From<&'a ImportMap> for ModuleMapping<'a> {
+    fn from(map: &'a ImportMap) -> Self {
         let mut module_mapping = ModuleMapping::new();
-        import_map.module_to_imports.keys().for_each(|module| {
-            module_mapping.insert(module);
-        });
-
-        Self {
-            cycles: FxHashMap::default(),
-            module_mapping,
-        }
+        map.module_to_imports
+            .keys()
+            .for_each(|module| module_mapping.insert(module));
+        module_mapping
     }
 }
