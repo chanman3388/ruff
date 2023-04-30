@@ -1,12 +1,15 @@
 // use log::debug;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use ruff_diagnostics::{Diagnostic, Violation};
 use ruff_macros::{derive_message_formats, violation};
 use ruff_python_ast::helpers::to_module_path;
-use ruff_python_ast::imports::{CyclicImportHelper, ModuleImport, ModuleMapping};
+use ruff_python_ast::imports::{ModuleImport, ModuleMapping};
+
+use crate::rules::pylint::helpers::CyclicImportHelper;
 
 #[violation]
 pub struct CyclicImport {
@@ -16,7 +19,7 @@ pub struct CyclicImport {
 impl Violation for CyclicImport {
     #[derive_message_formats]
     fn message(&self) -> String {
-        format!("Cyclic import ({}) (cyclic-import)", self.cycle)
+        format!("Cyclic import ({})", self.cycle)
     }
 }
 
@@ -110,7 +113,7 @@ pub fn cyclic_import(
     path: &Path,
     package: Option<&Path>,
     imports: &FxHashMap<String, Vec<ModuleImport>>,
-    cyclic_import_helper: &mut CyclicImportHelper,
+    cyclic_import_helper_lock: Arc<RwLock<CyclicImportHelper>>,
 ) -> Option<Vec<Diagnostic>> {
     let Some(package) = package else {
         return None;
@@ -126,42 +129,46 @@ pub fn cyclic_import(
     let Some((module_name, _)) = imports.get_key_value(&module_name as &str) else {
         return None;
     };
-    if let Some(existing_cycles) = cyclic_import_helper.cycles.get(
-        cyclic_import_helper
-            .module_mapping
-            .to_id(module_name)
-            .unwrap(),
-    ) {
-        if existing_cycles.is_empty() {
-            return None;
+    {
+        let helper = cyclic_import_helper_lock.read().unwrap();
+        if let Some(existing_cycles) = helper
+            .cycles
+            .get(helper.module_mapping.to_id(module_name).unwrap())
+        {
+            return if existing_cycles.is_empty() {
+                None
+            } else {
+                // debug!("Existing cycles: {existing_cycles:#?}");
+                Some(
+                    existing_cycles
+                        .iter()
+                        .map(|cycle| {
+                            Diagnostic::new(
+                                CyclicImport {
+                                    cycle: cycle
+                                        .iter()
+                                        .map(|id| {
+                                            (*helper.module_mapping.to_module(id).unwrap())
+                                                .to_string()
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(" -> "),
+                                },
+                                (&imports[module_name][0]).into(),
+                            )
+                        })
+                        .collect::<Vec<Diagnostic>>(),
+                )
+            };
         }
-        // debug!("Existing cycles: {existing_cycles:#?}");
-        Some(
-            existing_cycles
-                .iter()
-                .map(|cycle| {
-                    Diagnostic::new(
-                        CyclicImport {
-                            cycle: cycle
-                                .iter()
-                                .map(|id| {
-                                    (*cyclic_import_helper.module_mapping.to_module(id).unwrap())
-                                        .to_string()
-                                })
-                                .collect::<Vec<_>>()
-                                .join(" -> "),
-                        },
-                        (&imports[module_name][0]).into(),
-                    )
-                })
-                .collect::<Vec<Diagnostic>>(),
-        )
-    } else {
+    }
+    {
+        let mut helper = cyclic_import_helper_lock.write().unwrap();
         let cyclic_import_checker = CyclicImportChecker { imports };
         let VisitedAndCycles {
             fully_visited: mut visited,
             cycles: new_cycles,
-        } = cyclic_import_checker.has_cycles(module_name, &cyclic_import_helper.module_mapping);
+        } = cyclic_import_checker.has_cycles(module_name, &helper.module_mapping);
         // we'll always have new visited stuff if we have
         let mut out_vec: Vec<Diagnostic> = Vec::new();
         if let Some(new_cycles) = new_cycles {
@@ -169,7 +176,7 @@ pub fn cyclic_import(
             for new_cycle in &new_cycles {
                 if let [first, the_rest @ ..] = &new_cycle[..] {
                     if first
-                        == cyclic_import_helper
+                        == helper
                             .module_mapping
                             .to_id(module_name)
                             .unwrap()
@@ -179,7 +186,7 @@ pub fn cyclic_import(
                                 cycle: new_cycle
                                     .iter()
                                     .map(|id| {
-                                        (*cyclic_import_helper
+                                        (*helper
                                             .module_mapping
                                             .to_module(id)
                                             .unwrap())
@@ -192,7 +199,7 @@ pub fn cyclic_import(
                                 .iter()
                                 .find(|m| {
                                     &m.module
-                                        == cyclic_import_helper
+                                        == helper
                                             .module_mapping
                                             .to_module(&the_rest[0])
                                             .unwrap()
@@ -210,12 +217,12 @@ pub fn cyclic_import(
                         .chain(new_cycle[..pos].iter())
                         .map(std::clone::Clone::clone)
                         .collect::<Vec<_>>();
-                    if let Some(existing) = cyclic_import_helper.cycles.get_mut(involved_module) {
+                    if let Some(existing) = helper.cycles.get_mut(involved_module) {
                         existing.insert(cycle_to_insert);
                     } else {
                         let mut new_set = FxHashSet::default();
                         new_set.insert(cycle_to_insert);
-                        cyclic_import_helper
+                        helper
                             .cycles
                             .insert(*involved_module, new_set);
                     }
@@ -225,7 +232,7 @@ pub fn cyclic_import(
         }
         // process the visited nodes which don't have cycles
         for visited_module in &visited {
-            cyclic_import_helper
+            helper
                 .cycles
                 .insert(*visited_module, FxHashSet::default());
         }
@@ -355,41 +362,42 @@ mod tests {
         let path_c = Path::new("a/c");
         let package = Some(Path::new("a"));
 
-        let mut cycle_helper = CyclicImportHelper::new(&import_map);
+        let cyclic_helper = Arc::new(RwLock::new(CyclicImportHelper::new(&import_map)));
         let diagnostic = cyclic_import(
             path_a,
             package,
             &import_map.module_to_imports,
-            &mut cycle_helper,
+            cyclic_helper.clone(),
         );
+        {
+            let helper = cyclic_helper.read().unwrap();
+            let a_a_id = *helper.module_mapping.to_id(&a_a.module).unwrap();
+            let a_b_id = *helper.module_mapping.to_id(&a_b.module).unwrap();
 
-        let a_a_id = *cycle_helper.module_mapping.to_id(&a_a.module).unwrap();
-        let a_b_id = *cycle_helper.module_mapping.to_id(&a_b.module).unwrap();
+            let mut set_a: FxHashSet<Vec<u32>> = FxHashSet::default();
+            set_a.insert(vec![a_b_id, a_a_id]);
+            let mut set_b: FxHashSet<Vec<u32>> = FxHashSet::default();
+            set_b.insert(vec![a_a_id, a_b_id]);
 
-        let mut set_a: FxHashSet<Vec<u32>> = FxHashSet::default();
-        set_a.insert(vec![a_b_id, a_a_id]);
-        let mut set_b: FxHashSet<Vec<u32>> = FxHashSet::default();
-        set_b.insert(vec![a_a_id, a_b_id]);
-
-        assert_eq!(
-            diagnostic,
-            Some(vec![Diagnostic::new(
-                CyclicImport {
-                    cycle: "a.a -> a.b".to_string(),
-                },
-                (&b_in_a).into(),
-            )])
-        );
-        let mut check_cycles: FxHashMap<u32, FxHashSet<Vec<u32>>> = FxHashMap::default();
-        check_cycles.insert(a_b_id, set_a);
-        check_cycles.insert(a_a_id, set_b);
-        assert_eq!(cycle_helper.cycles, check_cycles);
-
+            assert_eq!(
+                diagnostic,
+                Some(vec![Diagnostic::new(
+                    CyclicImport {
+                        cycle: "a.a -> a.b".to_string(),
+                    },
+                    (&b_in_a).into(),
+                )])
+            );
+            let mut check_cycles: FxHashMap<u32, FxHashSet<Vec<u32>>> = FxHashMap::default();
+            check_cycles.insert(a_b_id, set_a);
+            check_cycles.insert(a_a_id, set_b);
+            assert_eq!(helper.cycles, check_cycles);
+        }
         let diagnostic = cyclic_import(
             path_b,
             package,
             &import_map.module_to_imports,
-            &mut cycle_helper,
+            cyclic_helper.clone(),
         );
         assert_eq!(
             diagnostic,
@@ -404,7 +412,7 @@ mod tests {
             path_c,
             package,
             &import_map.module_to_imports,
-            &mut cycle_helper
+            cyclic_helper,
         )
         .is_none());
     }

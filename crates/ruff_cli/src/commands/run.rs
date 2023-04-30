@@ -1,5 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -13,11 +14,11 @@ use ruff_text_size::{TextRange, TextSize};
 use ruff::message::Message;
 use ruff::registry::Rule;
 use ruff::resolver::PyprojectDiscovery;
-use ruff::rules::pylint::pylint_cyclic_import;
+use ruff::rules::pylint::{CyclicImportHelper, pylint_cyclic_import};
 use ruff::settings::{flags, AllSettings};
 use ruff::{fs, packaging, resolver, warn_user_once, IOError};
 use ruff_diagnostics::Diagnostic;
-use ruff_python_ast::imports::{CyclicImportHelper, ImportMap};
+use ruff_python_ast::imports::ImportMap;
 use ruff_python_ast::source_code::SourceFileBuilder;
 
 use crate::args::Overrides;
@@ -145,59 +146,63 @@ pub fn run(
         });
 
     debug!("{:#?}", diagnostics.imports);
-    let mut cycle_helper: CyclicImportHelper = CyclicImportHelper::new(&diagnostics.imports);
+    let cycle_helper = Arc::new(RwLock::new(CyclicImportHelper::new(&diagnostics.imports)));
 
-    let path_package_settings_map =
-        paths
-            .iter()
-            .filter_map(|entry| entry.as_ref().ok())
-            .map(|entry| {
-                let path = entry.path();
-                let package = path
-                    .parent()
-                    .and_then(|parent| package_roots.get(parent))
-                    .and_then(|package| *package);
-                let settings = resolver.resolve_all(path, pyproject_strategy);
-                (path, package, settings)
-            });
-
-    let mut new_diags = Diagnostics::default();
-
-    for (path, package, settings) in path_package_settings_map {
-        if settings.lib.rules.enabled(Rule::CyclicImport) {
-            if let Some(cycle_diagnostics) = pylint_cyclic_import(
-                path,
-                package,
-                &diagnostics.imports.module_to_imports,
-                &mut cycle_helper,
-            ) {
-                // should we take into account Jupyter notebokks here?
-                let contents = std::fs::read_to_string(path)?;
-                let locator = ruff_python_ast::source_code::Locator::new(&contents);
-                let file = {
-                    let mut builder =
-                        SourceFileBuilder::new(path.to_string_lossy().as_ref(), locator.contents());
-                    if settings.lib.show_source {
-                        if let Some(line_index) = locator.line_index() {
-                            builder.set_line_index(line_index.clone());
+    let new_diags = paths
+        .par_iter()
+        .filter_map(|entry| entry.as_ref().ok())
+        .map(|entry| {
+            let path = entry.path();
+            let package = path
+                .parent()
+                .and_then(|parent| package_roots.get(parent))
+                .and_then(|package| *package);
+            let settings = resolver.resolve_all(path, pyproject_strategy);
+            if settings.lib.rules.enabled(Rule::CyclicImport) {
+                if let Some(cycle_diagnostics) = pylint_cyclic_import(
+                    path,
+                    package,
+                    &diagnostics.imports.module_to_imports,
+                    cycle_helper.clone(),
+                ) {
+                    // should we take into account Jupyter notebooks here?
+                    let Ok(contents) = std::fs::read_to_string(path) else {
+                        return Diagnostics::default()
+                    };
+                    let locator = ruff_python_ast::source_code::Locator::new(&contents);
+                    let file = {
+                        let mut builder = SourceFileBuilder::new(
+                            path.to_string_lossy().as_ref(),
+                            locator.contents(),
+                        );
+                        if settings.lib.show_source {
+                            if let Some(line_index) = locator.line_index() {
+                                builder.set_line_index(line_index.clone());
+                            }
                         }
-                        // builder.set_source_code(&locator.to_source_code());
-                    }
 
-                    builder.finish()
-                };
-                new_diags += Diagnostics::new(
-                    cycle_diagnostics
-                        .into_iter()
-                        .map(|diagnostic| {
-                            Message::from_diagnostic(diagnostic, file.clone(), 0.into())
-                        })
-                        .collect::<Vec<_>>(),
-                    ImportMap::default(),
-                );
+                        builder.finish()
+                    };
+                    Diagnostics::new(
+                        cycle_diagnostics
+                            .into_iter()
+                            .map(|diagnostic| {
+                                Message::from_diagnostic(diagnostic, file.clone(), 0.into())
+                            })
+                            .collect::<Vec<_>>(),
+                        ImportMap::default(),
+                    )
+                } else {
+                    Diagnostics::default()
+                }
+            } else {
+                Diagnostics::default()
             }
-        }
-    }
+        })
+        .reduce(Diagnostics::default, |mut acc, item| {
+            acc += item;
+            acc
+        });
     diagnostics += new_diags;
     diagnostics.messages.sort_unstable();
     let duration = start.elapsed();

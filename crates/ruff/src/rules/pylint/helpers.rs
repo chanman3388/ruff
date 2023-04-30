@@ -1,3 +1,6 @@
+use rustc_hash::{FxHashSet, FxHashMap};
+
+use ruff_python_ast::imports::{ImportMap, ModuleMapping};
 use ruff_python_semantic::analyze::function_type;
 use ruff_python_semantic::analyze::function_type::FunctionType;
 use ruff_python_semantic::scope::{FunctionDef, ScopeKind};
@@ -34,4 +37,24 @@ pub fn in_dunder_init(checker: &Checker) -> bool {
         return false;
     }
     true
+}
+
+#[derive(Default)]
+pub struct CyclicImportHelper<'a> {
+    pub cycles: FxHashMap<u32, FxHashSet<Vec<u32>>>,
+    pub module_mapping: ModuleMapping<'a>,
+}
+
+impl<'a> CyclicImportHelper<'a> {
+    pub fn new(import_map: &'a ImportMap) -> Self {
+        let mut module_mapping = ModuleMapping::new();
+        import_map.module_to_imports.keys().for_each(|module| {
+            module_mapping.insert(module);
+        });
+
+        Self {
+            cycles: FxHashMap::default(),
+            module_mapping,
+        }
+    }
 }
