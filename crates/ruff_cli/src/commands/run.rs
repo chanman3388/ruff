@@ -164,7 +164,7 @@ pub fn run(
                     &diagnostics.imports.module_to_imports,
                     &module_mapping,
                 ) {
-                    // should we take into account Jupyter notebokks here?
+                    // should we take into account Jupyter notebooks here?
                     if let Ok(contents) = std::fs::read_to_string(path) {
                         let locator = ruff_python_ast::source_code::Locator::new(&contents);
                         let file = {

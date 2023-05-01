@@ -16,7 +16,7 @@ pub struct CyclicImport {
 impl Violation for CyclicImport {
     #[derive_message_formats]
     fn message(&self) -> String {
-        format!("Cyclic import ({}) (cyclic-import)", self.cycle)
+        format!("Cyclic import ({})", self.cycle)
     }
 }
 
@@ -65,14 +65,14 @@ impl CyclicImportChecker<'_> {
                 debug!("{tabs}\timport: {}", import.module);
                 let Some(&check_module_id) = module_mapping.to_id(&import.module) else { continue; };
                 if check_module_id == module_id {
-                    debug!("{tabs}\t\t cycles: {:?}", stack.to_vec());
+                    debug!("{tabs}\t\t cycles: {:?}", stack.clone());
                     // when the length is 1 and the only item is the import we're looking at
                     // then we're importing self, could we report this so we don't have to
                     // do this again for import-self W0406?
                     if stack.len() == 1 {
                         continue;
                     }
-                    cycles.push(stack.to_vec());
+                    cycles.push(stack.clone());
                 } else {
                     // don't care if it is a loop related to another module
                     if stack.contains(&check_module_id) {
@@ -124,7 +124,7 @@ pub fn cyclic_import(
         // we'll always have new visited stuff if we have
         let mut out_vec: Vec<Diagnostic> = Vec::new();
         debug!("New cycles {new_cycles:#?}");
-        for new_cycle in &new_cycles {        
+        for new_cycle in &new_cycles {
             out_vec.push(Diagnostic::new(
                 CyclicImport {
                     cycle: new_cycle
@@ -155,35 +155,6 @@ mod tests {
     use ruff_text_size::{TextRange, TextSize};
 
     use super::*;
-
-    //     #[test]
-    //     fn cyclic_import_unrelated_module_not_traversed() {
-    //         let mut map = FxHashMap::default();
-    //         let size1 = TextSize::from(1);
-    //         let size2 = TextSize::from(2);
-    //         let range1 = TextRange::new(size1, size2);
-    //         let range2 = TextRange::new(size1, size2);
-
-    //         let a = ModuleImport::new("a".to_string(), range1);
-    //         let b = ModuleImport::new("b".to_string(), range2);
-    //         map.insert(a.module.clone(), vec![]);
-    //         map.insert(b.module, vec![a.clone()]);
-    //         let import_map = ImportMap::new(map);
-    //         let cyclic_checker = CyclicImportChecker {
-    //             imports: &import_map.module_to_imports,
-    //         };
-
-    //         let cycle_helper = CyclicImportHelper::new(&import_map);
-
-    //         let VisitedAndCycles {
-    //             fully_visited: visited,
-    //             cycles,
-    //         } = cyclic_checker.has_cycles(&a.module, &cycle_helper.module_mapping);
-    //         let mut check_visited = FxHashSet::default();
-    //         check_visited.insert(*cycle_helper.module_mapping.to_id(&a.module).unwrap());
-    //         assert_eq!(visited, check_visited);
-    //         assert!(cycles.is_none());
-    //     }
 
     #[test]
     fn cyclic_import_multiple_cycles() {
@@ -224,95 +195,14 @@ mod tests {
         let c_id = *module_mapping.to_id(&c.module).unwrap();
         let d_id = *module_mapping.to_id(&d.module).unwrap();
 
-        let mut check_cycles = vec![];
-        check_cycles.push(vec![a_id, b_id, c_id, d_id]);
-        check_cycles.push(vec![a_id, b_id, d_id]);
-        check_cycles.push(vec![a_id, c_id, b_id, d_id]);
-        check_cycles.push(vec![a_id, c_id, d_id]);
+        let check_cycles = vec![
+            vec![a_id, b_id, c_id, d_id],
+            vec![a_id, b_id, d_id],
+            vec![a_id, c_id, b_id, d_id],
+            vec![a_id, c_id, d_id],
+        ];
         assert_eq!(cycles, Some(check_cycles));
     }
-
-    //     #[test]
-    //     fn cyclic_import_check_diagnostics() {
-    //         let size1 = TextSize::from(1);
-    //         let size2 = TextSize::from(2);
-    //         let size3 = TextSize::from(3);
-    //         let size4 = TextSize::from(4);
-    //         let range1 = TextRange::new(size1, size2);
-    //         let range2 = TextRange::new(size1, size3);
-    //         let range3 = TextRange::new(size1, size4);
-    //         let range4 = TextRange::new(size2, size3);
-    //         let range5 = TextRange::new(size2, size4);
-
-    //         let a_a = ModuleImport::new("a.a".to_string(), range1);
-    //         let a_b = ModuleImport::new("a.b".to_string(), range2);
-    //         let a_c = ModuleImport::new("a.c".to_string(), range3);
-    //         let b_in_a = ModuleImport::new("a.b".to_string(), range4);
-    //         let a_in_b = ModuleImport::new("a.a".to_string(), range5);
-    //         let mut map = FxHashMap::default();
-    //         map.insert(a_a.module.clone(), vec![b_in_a.clone()]);
-    //         map.insert(a_b.module.clone(), vec![a_in_b.clone()]);
-    //         map.insert(a_c.module, vec![]);
-    //         let import_map = ImportMap::new(map);
-
-    //         let path_a = Path::new("a/a");
-    //         let path_b = Path::new("a/b");
-    //         let path_c = Path::new("a/c");
-    //         let package = Some(Path::new("a"));
-
-    //         let mut cycle_helper = CyclicImportHelper::new(&import_map);
-    //         let diagnostic = cyclic_import(
-    //             path_a,
-    //             package,
-    //             &import_map.module_to_imports,
-    //             &mut cycle_helper,
-    //         );
-
-    //         let a_a_id = *cycle_helper.module_mapping.to_id(&a_a.module).unwrap();
-    //         let a_b_id = *cycle_helper.module_mapping.to_id(&a_b.module).unwrap();
-
-    //         let mut set_a: FxHashSet<Vec<u32>> = FxHashSet::default();
-    //         set_a.insert(vec![a_b_id, a_a_id]);
-    //         let mut set_b: FxHashSet<Vec<u32>> = FxHashSet::default();
-    //         set_b.insert(vec![a_a_id, a_b_id]);
-
-    //         assert_eq!(
-    //             diagnostic,
-    //             Some(vec![Diagnostic::new(
-    //                 CyclicImport {
-    //                     cycle: "a.a -> a.b".to_string(),
-    //                 },
-    //                 (&b_in_a).into(),
-    //             )])
-    //         );
-    //         let mut check_cycles: FxHashMap<u32, FxHashSet<Vec<u32>>> = FxHashMap::default();
-    //         check_cycles.insert(a_b_id, set_a);
-    //         check_cycles.insert(a_a_id, set_b);
-    //         assert_eq!(cycle_helper.cycles, check_cycles);
-
-    //         let diagnostic = cyclic_import(
-    //             path_b,
-    //             package,
-    //             &import_map.module_to_imports,
-    //             &mut cycle_helper,
-    //         );
-    //         assert_eq!(
-    //             diagnostic,
-    //             Some(vec![Diagnostic::new(
-    //                 CyclicImport {
-    //                     cycle: "a.b -> a.a".to_string(),
-    //                 },
-    //                 (&a_in_b).into(),
-    //             )])
-    //         );
-    //         assert!(cyclic_import(
-    //             path_c,
-    //             package,
-    //             &import_map.module_to_imports,
-    //             &mut cycle_helper
-    //         )
-    //         .is_none());
-    //     }
 
     #[test]
     fn cyclic_import_test_no_cycles_on_import_self() {
