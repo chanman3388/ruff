@@ -9,6 +9,7 @@ use log::{debug, error, warn};
 #[cfg(not(target_family = "wasm"))]
 use rayon::prelude::*;
 use ruff_text_size::{TextRange, TextSize};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use ruff::message::Message;
 use ruff::registry::Rule;
@@ -17,7 +18,7 @@ use ruff::rules::pylint::pylint_cyclic_import;
 use ruff::settings::{flags, AllSettings};
 use ruff::{fs, packaging, resolver, warn_user_once, IOError};
 use ruff_diagnostics::Diagnostic;
-use ruff_python_ast::imports::{CyclicImportHelper, ImportMap};
+use ruff_python_ast::imports::ImportMap;
 use ruff_python_ast::source_code::SourceFileBuilder;
 
 use crate::args::Overrides;
@@ -145,7 +146,7 @@ pub fn run(
         });
 
     debug!("{:#?}", diagnostics.imports);
-    let mut cycle_helper: CyclicImportHelper = CyclicImportHelper::new(&diagnostics.imports);
+    let mut cycles: FxHashMap<&str, FxHashSet<Vec<&str>>> = FxHashMap::default();
 
     let path_package_settings_map =
         paths
@@ -169,7 +170,7 @@ pub fn run(
                 path,
                 package,
                 &diagnostics.imports.module_to_imports,
-                &mut cycle_helper,
+                &mut cycles,
             ) {
                 // should we take into account Jupyter notebokks here?
                 let contents = std::fs::read_to_string(path)?;

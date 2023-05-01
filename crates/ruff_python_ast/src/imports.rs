@@ -1,5 +1,5 @@
 use ruff_text_size::TextRange;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -149,56 +149,5 @@ impl<'a> IntoIterator for &'a ImportMap {
 
     fn into_iter(self) -> Self::IntoIter {
         self.module_to_imports.iter()
-    }
-}
-
-#[derive(Default)]
-pub struct ModuleMapping<'a> {
-    pub(super) module_to_id: FxHashMap<&'a str, u32>,
-    pub(super) id_to_module: Vec<&'a str>,
-    id: u32,
-}
-
-impl<'a> ModuleMapping<'a> {
-    pub fn new() -> Self {
-        Self {
-            module_to_id: FxHashMap::default(),
-            id_to_module: vec![],
-            id: 0,
-        }
-    }
-
-    pub(super) fn insert(&mut self, module: &'a str) {
-        self.module_to_id.insert(module, self.id);
-        self.id_to_module.push(module);
-        self.id += 1;
-    }
-
-    pub fn to_id(&self, module: &str) -> Option<&u32> {
-        self.module_to_id.get(module)
-    }
-
-    pub fn to_module(&self, id: &u32) -> Option<&&str> {
-        self.id_to_module.get(*id as usize)
-    }
-}
-
-#[derive(Default)]
-pub struct CyclicImportHelper<'a> {
-    pub cycles: FxHashMap<u32, FxHashSet<Vec<u32>>>,
-    pub module_mapping: ModuleMapping<'a>,
-}
-
-impl<'a> CyclicImportHelper<'a> {
-    pub fn new(import_map: &'a ImportMap) -> Self {
-        let mut module_mapping = ModuleMapping::new();
-        import_map.module_to_imports.keys().for_each(|module| {
-            module_mapping.insert(module);
-        });
-
-        Self {
-            cycles: FxHashMap::default(),
-            module_mapping,
-        }
     }
 }
